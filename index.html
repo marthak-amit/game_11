@@ -1,0 +1,93 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<link rel="manifest" href="./manifest.json">
+<meta name="theme-color" content="#05050f">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<title>Prism Rift</title>
+<link rel="stylesheet" href="/src/style.css">
+</head>
+<body>
+<canvas id="c"></canvas>
+
+<!-- HUD -->
+<div id="hud" class="hidden">
+  <button id="btnPause" class="icon">❚❚</button>
+  <div class="score-wrap"><div id="score">0</div><div id="mult" class="chip">x1</div></div>
+  <div class="shardcount">◆ <span id="hudShards">0</span></div>
+  <div id="pops"></div>
+  <div id="hint" class="hint hidden"></div>
+  <div class="bottom">
+    <button id="btnPhase" disabled><span class="fill" id="energyFill"></span><span class="lbl" id="phaseLbl">PHASE</span></button>
+  </div>
+</div>
+
+<!-- MENU -->
+<div id="menu" class="screen">
+  <div class="topbar">
+    <div class="wallet">◆ <span id="menuShards">0</span></div>
+    <button id="btnSettings" class="icon">⚙</button>
+  </div>
+  <div class="logo"><span>PRISM</span><span class="b">RIFT</span></div>
+  <div class="sub">BEST <b id="menuBest">0</b></div>
+  <button id="btnPlay" class="play">PLAY</button>
+  <div class="tapnote">Tap left / right to switch lanes · Hug walls to build combos</div>
+  <div class="nav">
+    <button data-open="ships"><i>▲</i>Ships</button>
+    <button data-open="missions"><i>★</i>Missions<em id="missionDot" class="dot hidden"></em></button>
+    <button data-open="shop"><i>◆</i>Shop</button>
+  </div>
+</div>
+
+<!-- REVIVE -->
+<div id="revive" class="screen hidden">
+  <div class="card">
+    <h2>CRASHED!</h2>
+    <div class="ring"><svg viewBox="0 0 100 100"><circle cx="50" cy="50" r="44" id="ringArc"/></svg><b id="reviveNum">5</b></div>
+    <button id="btnReviveAd" class="primary">▶ Watch ad · Continue</button>
+    <button id="btnReviveGems" class="secondary">Use <span id="reviveCost">60</span> ◆ · Continue</button>
+    <button id="btnSkipRevive" class="link">No thanks</button>
+  </div>
+</div>
+
+<!-- RESULTS -->
+<div id="results" class="screen hidden">
+  <div class="card">
+    <div id="newBest" class="newbest hidden">NEW BEST!</div>
+    <div class="label">SCORE</div><div class="bigscore" id="resScore">0</div>
+    <div class="stats">
+      <div><b id="resShards">0</b><small>◆ shards</small></div>
+      <div><b id="resGrazes">0</b><small>grazes</small></div>
+      <div><b id="resMult">x1</b><small>best combo</small></div>
+    </div>
+    <div class="bestline">Best <b id="resBest">0</b></div>
+    <button id="btnDouble" class="secondary">▶ Watch ad · Double shards</button>
+    <button id="btnAgain" class="primary">PLAY AGAIN</button>
+    <div class="row">
+      <button id="btnShare" class="secondary small">Share</button>
+      <button id="btnHome" class="secondary small">Home</button>
+    </div>
+  </div>
+</div>
+
+<!-- PAUSE -->
+<div id="pause" class="screen hidden"><div class="card"><h2>PAUSED</h2>
+  <button id="btnResume" class="primary">RESUME</button><button id="btnQuit" class="link">Quit run</button></div></div>
+
+<!-- MODAL (ships / missions / shop / settings / daily) -->
+<div id="modal" class="screen hidden"><div class="card wide">
+  <button id="btnCloseModal" class="close">✕</button>
+  <h2 id="modalTitle"></h2><div id="modalBody"></div></div></div>
+
+<div id="toast"></div>
+
+<div id="adsim"><div class="card"><h3></h3><div class="cd">3</div>
+  <button class="ok primary">OK</button><button class="cancel link">Close</button>
+  <small>Ad/purchase simulator — replaced by real AdMob / Play Billing in the native build.</small></div></div>
+
+<script type="module" src="/src/main.js"></script>
+</body>
+</html>
