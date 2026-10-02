@@ -2,12 +2,12 @@
 const KEY = 'prismrift.save.v1';
 
 export const SKINS = [
-  { id: 'dart',   name: 'Dart',     color: 0x00e5ff, shape: 'cone',  price: 0 },
-  { id: 'comet',  name: 'Comet',    color: 0xff3df2, shape: 'tetra', price: 300 },
-  { id: 'ember',  name: 'Ember',    color: 0xffa500, shape: 'octa',  price: 600 },
-  { id: 'viper',  name: 'Viper',    color: 0x7dff4a, shape: 'blade', price: 1000 },
-  { id: 'nova',   name: 'Nova',     color: 0xb06bff, shape: 'gem',   price: 1800 },
-  { id: 'aurum',  name: 'Aurum',    color: 0xffe14d, shape: 'star',  price: 3000 },
+  { id: 'dart',   name: 'Apollo',  color: 0xff7a18, swatch: 0xe23c2b, price: 0 },
+  { id: 'comet',  name: 'Shuttle', color: 0x7fd0ff, swatch: 0xc2622b, price: 300 },
+  { id: 'ember',  name: 'Inferno', color: 0xff3a10, swatch: 0xff6a1a, price: 600 },
+  { id: 'viper',  name: 'Stealth', color: 0x39ff7a, swatch: 0x39ff7a, price: 1000 },
+  { id: 'nova',   name: 'Nebula',  color: 0xb06bff, swatch: 0x9b5cff, price: 1800 },
+  { id: 'aurum',  name: 'Aurum',   color: 0xffd23a, swatch: 0xe8b923, price: 3000 },
 ];
 
 const defaults = () => ({

@@ -4,6 +4,7 @@
 import * as THREE from 'three';
 import { store, SKINS } from './storage.js';
 import { Sfx, haptic } from './audio.js';
+import { buildRocket } from './rockets.js';
 
 const N = 8, STEP = (Math.PI * 2) / N, R = 5, SHIP_R = 3.9;
 const ZONES = [190, 315, 42, 135, 262, 8]; // hue per zone
@@ -25,7 +26,7 @@ export class Game {
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
     this.scene = new THREE.Scene();
     this.camera = new THREE.PerspectiveCamera(72, 1, 0.1, 220);
-    this.fog = new THREE.FogExp2(0x050510, 0.018);
+    this.fog = new THREE.FogExp2(0x050510, 0.0075);
     this.scene.fog = this.fog;
     this.hue = ZONES[0]; this.hueTarget = ZONES[0];
     this.envColor = new THREE.Color(); this.tmp = new THREE.Vector3(); this.tmpM = new THREE.Matrix4();
@@ -67,34 +68,21 @@ export class Game {
     p[i * 3] = Math.sin(a) * r; p[i * 3 + 1] = Math.cos(a) * r; p[i * 3 + 2] = init ? rnd(-160, 8) : -160;
   }
 
-  shipGeometry(shape) {
-    switch (shape) {
-      case 'tetra': return new THREE.TetrahedronGeometry(0.55).rotateX(0.6);
-      case 'octa': return new THREE.OctahedronGeometry(0.5).scale(0.9, 0.7, 1.5);
-      case 'blade': return new THREE.ConeGeometry(0.4, 1.7, 3).rotateX(-Math.PI / 2).scale(1.6, 0.5, 1);
-      case 'gem': return new THREE.IcosahedronGeometry(0.5, 0).scale(1, 0.8, 1.3);
-      case 'star': return new THREE.OctahedronGeometry(0.62, 0).scale(1.5, 0.45, 1.2);
-      default: return new THREE.ConeGeometry(0.42, 1.5, 4).rotateX(-Math.PI / 2);
-    }
-  }
   buildPlayer() {
     this.player = new THREE.Group(); this.scene.add(this.player);
     this.shipHolder = new THREE.Group(); this.player.add(this.shipHolder);
-    this.shipMat = new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true });
-    this.shipEdgeMat = new THREE.LineBasicMaterial({ color: 0xffffff, transparent: true });
     this.glow = new THREE.Mesh(new THREE.SphereGeometry(0.9, 12, 8),
       new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.18, blending: THREE.AdditiveBlending, depthWrite: false }));
     this.player.add(this.glow);
+    this.scene.add(new THREE.AmbientLight(0xffffff, 1.3));
+    const sun = new THREE.DirectionalLight(0xffffff, 2.4); sun.position.set(0.5, 3, 4); this.player.add(sun); sun.target = this.shipHolder;
     this.setSkin(store().skin);
   }
   setSkin(id) {
     const skin = SKINS.find((s) => s.id === id) || SKINS[0];
     this.skin = skin;
     while (this.shipHolder.children.length) this.shipHolder.remove(this.shipHolder.children[0]);
-    const g = this.shipGeometry(skin.shape);
-    this.shipMat.color.setHex(skin.color).multiplyScalar(0.55);
-    this.shipEdgeMat.color.setHex(0xffffff);
-    this.shipHolder.add(new THREE.Mesh(g, this.shipMat), new THREE.LineSegments(new THREE.EdgesGeometry(g), this.shipEdgeMat));
+    this.rocket = buildRocket(skin); this.rocket.group.scale.setScalar(1.4); this.shipHolder.add(this.rocket.group);
     this.glow.material.color.setHex(skin.color);
   }
 
@@ -139,7 +127,9 @@ export class Game {
     this.shardMat = new THREE.MeshBasicMaterial({ color: GOLD });
     this.padGeo = new THREE.BoxGeometry(R * STEP * 0.6, 0.06, 5);
     this.padMat = new THREE.MeshBasicMaterial({ color: GOOD, transparent: true, opacity: 0.85, blending: THREE.AdditiveBlending, depthWrite: false });
-    this.pool = { block: [], shard: [], pad: [] };
+    this.gapGeo = new THREE.BoxGeometry(R * STEP * 0.74, 0.05, 2.2);
+    this.gapMat = new THREE.MeshBasicMaterial({ color: GOOD, transparent: true, opacity: 0.42, blending: THREE.AdditiveBlending, depthWrite: false });
+    this.pool = { block: [], shard: [], pad: [], gap: [] };
   }
   take(kind) {
     const list = this.pool[kind];
@@ -149,7 +139,8 @@ export class Game {
       o = new THREE.Group();
       const glow = new THREE.Mesh(this.blockGeo, this.blockGlow); glow.scale.setScalar(1.08);
       o.add(new THREE.Mesh(this.blockGeo, this.blockFill), new THREE.LineSegments(this.blockEdges, this.blockLine), glow);
-    } else if (kind === 'shard') o = new THREE.Mesh(this.shardGeo, this.shardMat);
+    } else if (kind === 'gap') o = new THREE.Mesh(this.gapGeo, this.gapMat);
+    else if (kind === 'shard') o = new THREE.Mesh(this.shardGeo, this.shardMat);
     else o = new THREE.Mesh(this.padGeo, this.padMat);
     this.scene.add(o); list.push(o); return o;
   }
@@ -165,27 +156,33 @@ export class Game {
     this.shipHolder.visible = true; this.glow.visible = true;
     this.hueTarget = this.hue = ZONES[0];
   }
-  start() {
-    this.reset(); this.state = 'play'; this.speed = 18; Sfx.intensity = 0; Sfx.startMusic();
+  start(readySecs = 0) {
+    this.reset(); this.speed = 18; Sfx.intensity = 0; Sfx.startMusic();
     this.cb.event('start');
+    if (readySecs > 0) this.countdown(readySecs, 0); else this.state = 'play';
   }
+  // Frozen "3-2-1" so the player is never thrown into a running game (after ads / pause / revive).
+  countdown(secs, grace) { this.state = 'ready'; this.readyT = secs; this.readyShown = 0; this.readyGrace = grace; this.slow = 1; this.slowT = 0; this.last = performance.now(); }
   toMenu() { this.reset(); this.state = 'menu'; }
-  pause(v) { if (this.state === 'play' && v) { this.state = 'paused'; } else if (this.state === 'paused' && !v) { this.state = 'play'; this.last = performance.now(); } }
+  pause(v) {
+    if ((this.state === 'play' || this.state === 'ready') && v) { this.state = 'paused'; Sfx.stopMusic(); }
+    else if (this.state === 'paused' && !v) { this.countdown(2.4, 0.8); Sfx.startMusic(); }
+  }
 
   revive() {
-    this.revived = true; this.state = 'play'; this.graceT = 2.5; this.slow = 1;
+    this.revived = true; this.slow = 1;
     // clear the near rows so the player gets a clean restart
     for (const r of this.rows) if (r.at - this.D < 55) this.killRow(r);
     this.rows = this.rows.filter((r) => !r.dead);
     this.shipHolder.visible = true; this.glow.visible = true;
-    this.burst(this.player.position.x, this.player.position.y, 0, 0x7df9ff, 40, 6); Sfx.reward();
+    this.burst(this.player.position.x, this.player.position.y, 0, 0x7df9ff, 40, 6);
+    this.countdown(3, 2.0);
   }
   killRow(r) { r.dead = true; for (const o of r.objs) this.release(o); }
 
   // ---------- input ----------
   move(dir) {
-    if (this.state === 'menu') return;
-    if (this.state !== 'play') return;
+    if (this.state !== 'play' && this.state !== 'ready') return;
     if (Math.abs(this.lane * STEP - this.a) > STEP * 1.6) return; // limit buffering
     this.lane += dir; Sfx.move(); haptic(6);
   }
@@ -206,6 +203,7 @@ export class Game {
       row.blocked.push(l);
       const b = this.take('block'); b.userData.lane = l; row.objs.push(b);
     }
+    for (let i = 0; i < width; i++) { const m = this.take('gap'); m.userData = { lane: (gap + i) % N, gapMark: true }; row.objs.push(m); }
     if (opts.shards !== false && Math.random() < 0.55) {
       for (let i = 0; i < width; i++) {
         if (Math.random() < 0.7) { const s = this.take('shard'); s.userData = { lane: (gap + i) % N, at: at - 3 }; row.shards.push(s); row.objs.push(s); }
@@ -218,6 +216,7 @@ export class Game {
     for (const o of row.objs) {
       if (o.userData.lane === undefined) continue;
       let th = o.userData.lane * STEP + (row.spin && row.k !== 99 ? row.k * STEP * row.spinDir : 0);
+      if (o.userData.gapMark) { polar(th, R + 0.05 - 0.25, this.tmp); o.position.copy(this.tmp); o.position.z = -rel; o.rotation.z = th; continue; }
       if (o.userData.at !== undefined) { // shard
         polar(th, SHIP_R, this.tmp); o.position.copy(this.tmp); o.position.z = -(o.userData.at - this.D);
       } else {
@@ -312,22 +311,22 @@ export class Game {
 
   stepPlay(dt) {
     // speed curve
-    const base = 18 + 26 * (1 - Math.exp(-this.time / 80));
+    const base = 18 + 19 * (1 - Math.exp(-this.time / 80));
     let target = base * (this.phaseT > 0 ? 1.3 : 1) * (this.boostT > 0 ? 1.25 : 1);
     this.speed += (target - this.speed) * Math.min(1, dt * 3);
     this.D += this.speed * dt; this.time += dt; this.score += this.speed * dt * 0.33 * (this.phaseT > 0 ? 2 : 1);
     if (this.phaseT > 0) { this.phaseT -= dt; if (this.phaseT <= 0) { this.graceT = 0.6; Sfx.phaseEnd(); this.cb.event('phaseend'); } }
     if (this.graceT > 0) this.graceT -= dt;
     if (this.boostT > 0) this.boostT -= dt;
-    Sfx.intensity = clamp((this.speed - 18) / 26, 0, 1);
+    Sfx.intensity = clamp((this.speed - 18) / 20, 0, 1);
 
     const zone = Math.floor(this.D / 1100) % ZONES.length;
     if (zone !== this.zone) { this.zone = zone; this.hueTarget = ZONES[zone]; Sfx.zone(); this.cb.event('zone', { n: Math.floor(this.D / 1100) + 1 }); }
 
-    while (this.nextAt - this.D < 150) this.spawn();
+    while (this.nextAt - this.D < 175) this.spawn();
     for (const r of this.rows) {
       if (r.dead) continue;
-      if (r.spin) { const k = Math.max(0, Math.ceil((r.at - this.D - 34) / 15)); if (k !== r.k) { r.k = k; this.placeRow(r); } }
+      if (r.spin) { const k = Math.min(4, Math.max(0, Math.ceil((r.at - this.D - this.speed * 1.9) / (this.speed * 0.45)))); if (k !== r.k) { r.k = k; this.placeRow(r); } }
       if (r.shards.length) this.collectShards(r);
       if (!r.done && !r.dummy && this.D >= r.at - 0.7) this.resolveRow(r);
       if (this.state !== 'play') return;
@@ -343,6 +342,7 @@ export class Game {
     requestAnimationFrame(this.loop);
     let dt = Math.min(0.05, (now - this.last) / 1000); this.last = now;
     if (this.state === 'paused') { this.render(0); return; }
+    if (this.state === 'ready') this.slowT = 0;
     if (this.slowT > 0) { this.slowT -= dt; if (this.slowT <= 0) this.slow = 1; }
     this.update(dt * this.slow, dt);
     this.render(dt);
@@ -355,12 +355,17 @@ export class Game {
       this.hue = lerp(this.hue, ZONES[(Math.floor(this.time / 6)) % ZONES.length], 0.01);
     } else if (this.state === 'play') {
       this.stepPlay(dt);
+    } else if (this.state === 'ready') {
+      this.speed += (5 - this.speed) * Math.min(1, dt * 3);
+      this.readyT -= rawDt; const n = Math.ceil(this.readyT);
+      if (n !== this.readyShown && n > 0) { this.readyShown = n; this.cb.event('count', { n }); Sfx.ui(); }
+      if (this.readyT <= 0) { this.state = 'play'; this.graceT = Math.max(this.graceT, this.readyGrace); this.cb.event('count', { n: 0 }); }
     } else if (this.state === 'dead') {
       this.D += this.speed * dt * 0.15;
     }
-    if (this.state === 'play') {
+    if (this.state === 'play' || this.state === 'ready') {
       const tgt = this.lane * STEP; this.a += (tgt - this.a) * Math.min(1, dt * 24);
-      this.hue += ((((this.hueTarget - this.hue + 540) % 360) - 180)) * Math.min(1, dt * 1.5);
+      if (this.state === 'play') this.hue += ((((this.hueTarget - this.hue + 540) % 360) - 180)) * Math.min(1, dt * 1.5);
     }
     this.bank += ((tgt0(this) - this.a) * 0.9 - this.bank) * Math.min(1, rawDt * 14);
     this.shake = Math.max(0, this.shake - rawDt * 1.8);
@@ -398,7 +403,7 @@ export class Game {
       const rel = r.at - this.D;
       for (const o of r.objs) {
         if (o.userData.at !== undefined) { o.position.z = -(o.userData.at - this.D); o.rotation.y += dt * 3; }
-        else if (o.userData.pad) o.position.z = -rel;
+        else if (o.userData.pad || o.userData.gapMark) o.position.z = -rel;
         else { o.position.z = -rel; }
       }
     }
@@ -409,7 +414,9 @@ export class Game {
     polar(this.a, SHIP_R, this.player.position); this.player.rotation.z = this.a;
     this.shipHolder.rotation.z = clamp(this.bank, -0.9, 0.9) * 1.4; this.shipHolder.rotation.x = Math.sin(this.time * 9) * 0.03;
     const blink = this.graceT > 0 && !ph ? (Math.sin(this.time * 40) > 0 ? 0.35 : 1) : 1;
-    this.shipMat.opacity = ph ? 0.45 : blink; this.shipEdgeMat.opacity = ph ? 0.8 : blink;
+    const op = ph ? 0.5 : blink;
+    for (const m of this.rocket.mats) m.opacity = m.userData.base !== undefined ? m.userData.base * op : op;
+    this.rocket.flames.forEach((f, i) => { const k = 1 + Math.sin(this.time * 38 + i * 2) * 0.18 + Math.random() * 0.12 + (this.boostT > 0 || ph ? 0.6 : 0) + clamp((s - 18) / 26, 0, 1) * 0.35; f.scale.set(1, 1, k); });
     this.glow.material.opacity = ph ? 0.42 : 0.18 + (this.boostT > 0 ? 0.2 : 0);
     this.glow.scale.setScalar(1 + Math.sin(this.time * 8) * 0.06 + (ph ? 0.4 : 0));
     this.guideGroup.rotation.z = this.a; this.guideGroup.position.set(0, 0, 0);
@@ -425,7 +432,7 @@ export class Game {
     const sh = this.shake * 0.35;
     this.camera.position.set(this.tmp.x + rnd(-sh, sh), this.tmp.y + rnd(-sh, sh), 8.5);
     this.camera.rotation.z = this.camA + rnd(-sh, sh) * 0.05;
-    const fovT = 68 + clamp((s - 18) / 26, 0, 1) * 14 + (ph ? 10 : 0) + (this.boostT > 0 ? 6 : 0);
+    const fovT = 68 + clamp((s - 18) / 20, 0, 1) * 8 + (ph ? 8 : 0) + (this.boostT > 0 ? 6 : 0);
     this.camera.fov += (fovT - this.camera.fov) * Math.min(1, (dt || 0.016) * 4); this.camera.updateProjectionMatrix();
 
     this.renderer.render(this.scene, this.camera);

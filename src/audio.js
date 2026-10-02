@@ -44,6 +44,10 @@ class Audio_ {
     s.connect(f); f.connect(g); g.connect(this.master); s.start(t); s.stop(t + dur);
   }
 
+  // Silence everything while an ad is on screen, resume afterwards.
+  suspend() { if (this.ctx && this.ctx.state === 'running') this.ctx.suspend(); }
+  resume() { if (this.ctx && this.ctx.state === 'suspended') this.ctx.resume(); }
+
   sfxOn() { return store().sfx; }
   move() { if (this.sfxOn()) this.tone(300, 0.07, 'triangle', 0.08, 520); }
   shard(combo = 0) { if (this.sfxOn()) this.tone(mtof(72 + PENTA[Math.min(combo, 9)]), 0.18, 'sine', 0.18); }

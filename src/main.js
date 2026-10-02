@@ -1,3 +1,5 @@
+import { App } from '@capacitor/app';
+import { Capacitor } from '@capacitor/core';
 import { Game } from './game.js';
 import { Sfx, haptic } from './audio.js';
 import { store, save, SKINS } from './storage.js';
@@ -10,6 +12,12 @@ const show = (id, v = true) => $(id).classList.toggle('hidden', !v);
 const S = store();
 const fmt = (n) => Math.floor(n).toLocaleString('en-IN');
 const REVIVE_COST = 60;
+// Run an async handler at most once at a time - rapid multi-taps are ignored.
+const busyKeys = new Set();
+const once = (key, fn) => async (...a) => {
+  if (busyKeys.has(key)) return; busyKeys.add(key);
+  try { return await fn(...a); } finally { busyKeys.delete(key); }
+};
 let lastStats = null, reviveTimer = null, runsSinceAd = 0, doubled = false;
 
 function toast(msg) { const t = $('toast'); t.textContent = msg; t.classList.add('show'); clearTimeout(toast.t); toast.t = setTimeout(() => t.classList.remove('show'), 1800); }
@@ -38,6 +46,11 @@ const game = new Game($('c'), {
     else if (type === 'phase') pop('PHASE SHIFT', '#ffffff', true);
     else if (type === 'boost') pop('BOOST!', '#4dff9a');
     else if (type === 'death') onDeath(d);
+    else if (type === 'count') {
+      const h = $('hint');
+      if (d.n > 0) { h.classList.remove('hidden'); h.innerHTML = `<span class="count">${d.n}</span>`; }
+      else { h.classList.add('hidden'); pop('GO!', '#4dff9a', true); }
+    }
   },
 });
 
@@ -56,10 +69,25 @@ addEventListener('keydown', (e) => {
   if (e.repeat) return;
   if (e.key === 'ArrowLeft' || e.key === 'a') game.move(-1);
   else if (e.key === 'ArrowRight' || e.key === 'd') game.move(1);
-  else if (e.key === ' ' || e.key === 'ArrowUp') { if (game.state === 'menu') startRun(); else game.tryPhase(); }
+  else if (e.key === ' ' || e.key === 'ArrowUp') { if (game.state === 'menu') startRun(0); else game.tryPhase(); }
   else if (e.key === 'Escape' || e.key === 'p') pauseToggle();
 });
-document.addEventListener('visibilitychange', () => { if (document.hidden && game.state === 'play') pauseToggle(true); });
+// Android system navigation (back button / gesture / home / app switch) -> Paused dialog
+if (Capacitor.isNativePlatform()) {
+  App.addListener('backButton', () => {
+    if (Ads.isBusy()) return;
+    if (game.state === 'play' || game.state === 'ready') pauseToggle(true);
+    else if (game.state === 'paused') { /* stay on the dialog; Resume / Quit are explicit */ }
+    else if (!$('modal').classList.contains('hidden')) $('btnCloseModal').click();
+    else if (!$('revive').classList.contains('hidden')) $('btnSkipRevive').click();
+    else if (!$('results').classList.contains('hidden')) $('btnHome').click();
+    else App.exitApp();
+  });
+  App.addListener('appStateChange', ({ isActive }) => {
+    if (!isActive && !Ads.isBusy()) pauseToggle(true);
+  });
+}
+document.addEventListener('visibilitychange', () => { if (document.hidden && (game.state === 'play' || game.state === 'ready') && !Ads.isBusy()) pauseToggle(true); });
 document.addEventListener('contextmenu', (e) => e.preventDefault());
 
 // ---------- flow ----------
@@ -67,12 +95,14 @@ function refreshMenu() {
   $('menuShards').textContent = fmt(S.shards); $('menuBest').textContent = fmt(S.best);
   const list = ensureMissions(); $('missionDot').classList.toggle('hidden', !(list.some((m) => m.progress >= m.goal && !m.claimed) || dailyStatus().canClaim));
 }
-function startRun() {
+function startRun(readySecs = 0) {
+  if (typeof readySecs !== 'number') readySecs = 0;
+  if (['play', 'ready', 'paused'].includes(game.state) || Ads.isBusy()) return;
   Ads.banner(false);
   Sfx.unlock(); Sfx.ui(); doubled = false;
   ['menu', 'results', 'revive', 'pause', 'modal'].forEach((x) => show(x, false)); show('hud', true);
   Object.keys(hudCache).forEach((k) => delete hudCache[k]);
-  game.setSkin(S.skin); game.start();
+  game.setSkin(S.skin); game.start(readySecs);
   if (!S.tutorialDone) {
     const h = $('hint'); h.classList.remove('hidden');
     h.innerHTML = 'TAP <b>LEFT</b> / <b>RIGHT</b> to switch lanes<br><small>Find the gap · skim the walls for combos</small>';
@@ -80,17 +110,21 @@ function startRun() {
   }
 }
 function pauseToggle(force) {
-  if (game.state === 'play') { game.pause(true); show('pause', true); }
-  else if (game.state === 'paused' && !force) { game.pause(false); show('pause', false); }
+  if (game.state === 'play' || game.state === 'ready') { game.pause(true); show('pause', true); $('hint').classList.add('hidden'); }
+  else if (game.state === 'paused' && !force) { show('pause', false); game.pause(false); }
 }
 $('btnPause').onclick = () => { Sfx.ui(); pauseToggle(); };
-$('btnResume').onclick = () => { Sfx.ui(); pauseToggle(); };
-$('btnQuit').onclick = () => { show('pause', false); game.state = 'play'; game.die(); };
-$('btnPlay').onclick = startRun;
-$('btnAgain').onclick = async () => { await maybeInterstitial(); startRun(); };
-$('btnHome').onclick = async () => { Sfx.ui(); await maybeInterstitial(); goHome(); };
+$('btnResume').onclick = once('resume', async () => { Sfx.ui(); pauseToggle(); });
+$('btnQuit').onclick = () => { Sfx.stopMusic(); goHome(); };
+$('btnPlay').onclick = () => startRun(0);
+$('btnAgain').onclick = once('again', async () => { const shown = await maybeInterstitial(); startRun(shown ? 2.4 : 0); });
+$('btnHome').onclick = once('home', async () => { Sfx.ui(); await maybeInterstitial(); goHome(); });
 function goHome() { ['results', 'revive', 'pause', 'hud'].forEach((x) => show(x, false)); game.toMenu(); show('menu', true); refreshMenu(); Ads.banner(true); }
-async function maybeInterstitial() { runsSinceAd++; if (runsSinceAd >= INTERSTITIAL_EVERY_RUNS && S.runs > 2) { runsSinceAd = 0; await Ads.interstitial(); } }
+async function maybeInterstitial() {
+  runsSinceAd++;
+  if (runsSinceAd >= INTERSTITIAL_EVERY_RUNS && S.runs > 2) { runsSinceAd = 0; return Ads.interstitial(); }
+  return false;
+}
 
 function onDeath(stats) {
   lastStats = stats; show('hud', false);
@@ -105,16 +139,17 @@ function openRevive() {
   reviveTimer = setInterval(() => { t -= 0.1; upd(); if (t <= 0) { clearInterval(reviveTimer); show('revive', false); showResults(); } }, 100);
 }
 function doRevive() { clearInterval(reviveTimer); show('revive', false); show('hud', true); game.revive(); Sfx.startMusic(); }
-$('btnReviveAd').onclick = async () => {
+$('btnReviveAd').onclick = once('reviveAd', async () => {
   clearInterval(reviveTimer);
   if (await Ads.rewarded('revive')) doRevive(); else { show('revive', false); showResults(); }
-};
-$('btnReviveGems').onclick = () => {
+});
+$('btnReviveGems').onclick = once('reviveGems', async () => {
+  if (game.state !== 'dead') return;
   if (S.shards + game.shards < REVIVE_COST) return;
   const fromRun = Math.min(game.shards, REVIVE_COST); game.shards -= fromRun; S.shards -= REVIVE_COST - fromRun;
   save(); doRevive();
-};
-$('btnSkipRevive').onclick = () => { clearInterval(reviveTimer); show('revive', false); showResults(); };
+});
+$('btnSkipRevive').onclick = once('skip', async () => { if (game.state !== 'dead') return; clearInterval(reviveTimer); show('revive', false); showResults(); });
 
 function showResults() {
   const st = game.runStats(); lastStats = st;
@@ -126,10 +161,10 @@ function showResults() {
   $('btnDouble').disabled = st.shards < 5; $('btnDouble').textContent = `▶ Watch ad · Double shards (+${st.shards})`; $('btnDouble').classList.toggle('hidden', st.shards < 5);
   show('results', true); if (isBest) Sfx.reward();
 }
-$('btnDouble').onclick = async () => {
+$('btnDouble').onclick = once('double', async () => {
   if (doubled || !(await Ads.rewarded('double'))) return;
   doubled = true; S.shards += lastStats.shards; save(); $('btnDouble').disabled = true; $('btnDouble').textContent = '✓ Doubled!'; Sfx.reward(); toast(`+${lastStats.shards} ◆`);
-};
+});
 $('btnShare').onclick = async () => {
   const text = `I scored ${fmt(lastStats.score)} in PRISM RIFT! Can you beat me?`;
   try { if (navigator.share) await navigator.share({ title: 'Prism Rift', text, url: location.href }); else { await navigator.clipboard.writeText(text + ' ' + location.href); toast('Copied to clipboard'); } } catch (e) {}
@@ -145,7 +180,7 @@ const hex = (n) => '#' + n.toString(16).padStart(6, '0');
 function ships() {
   const rows = () => SKINS.map((s) => {
     const owned = S.owned.includes(s.id), sel = S.skin === s.id;
-    return `<div class="item ${sel ? 'sel' : ''}"><div class="swatch" style="color:${hex(s.color)}"></div><div class="grow"><div class="t">${s.name}</div><div class="d">${owned ? (sel ? 'Equipped' : 'Owned') : s.price + ' ◆'}</div></div>
+    return `<div class="item ${sel ? 'sel' : ''}"><div class="swatch" style="color:${hex(s.swatch)}"></div><div class="grow"><div class="t">${s.name}</div><div class="d">${owned ? (sel ? 'Equipped' : 'Owned') : s.price + ' ◆'}</div></div>
       <button data-id="${s.id}" ${sel ? 'disabled' : ''}>${owned ? 'Equip' : 'Buy'}</button></div>`;
   }).join('');
   openModal('SHIPS', rows(), (el) => {
@@ -180,11 +215,11 @@ function shop() {
   const html = `<div class="item"><div class="grow"><div class="t">Free shards</div><div class="d">Watch a short video</div></div><button data-free="1">▶ +50 ◆</button></div>` +
     PRODUCTS.filter((p) => !(p.id === 'no_ads' && S.noAds)).map((p) => `<div class="item"><div class="grow"><div class="t">${p.title}${p.badge ? `<span class="badge">${p.badge}</span>` : ''}</div><div class="d">${p.desc}</div></div><button data-p="${p.id}">${p.price}</button></div>`).join('');
   openModal('SHOP', html, (el) => {
-    el.onclick = async (e) => {
+    el.onclick = once('shop', async (e) => {
       const t = e.target;
       if (t.dataset.free) { if (await Ads.rewarded('shop')) { S.shards += 50; save(); Sfx.reward(); toast('+50 ◆'); $('menuShards').textContent = fmt(S.shards); } }
       else if (t.dataset.p) { if (await Billing.purchase(t.dataset.p)) { Sfx.reward(); toast('Purchase complete!'); $('menuShards').textContent = fmt(S.shards); shop(); } }
-    };
+    });
   });
 }
 

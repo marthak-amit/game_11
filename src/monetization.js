@@ -5,6 +5,7 @@ import { Capacitor } from '@capacitor/core';
 import { AdMob, RewardAdPluginEvents, BannerAdSize, BannerAdPosition } from '@capacitor-community/admob';
 import { store, save } from './storage.js';
 import { TEST_MODE, AD_UNITS } from './adconfig.js';
+import { Sfx } from './audio.js';
 
 const overlay = () => document.getElementById('adsim');
 const native = () => Capacitor.isNativePlatform();
@@ -12,6 +13,7 @@ const native = () => Capacitor.isNativePlatform();
 function simulate(title, seconds, okLabel) {
   return new Promise((resolve) => {
     const el = overlay();
+    if (el.classList.contains('show')) return resolve(false);
     el.querySelector('h3').textContent = title;
     const btn = el.querySelector('button.ok'), cancel = el.querySelector('button.cancel');
     const cd = el.querySelector('.cd');
@@ -23,8 +25,17 @@ function simulate(title, seconds, okLabel) {
   });
 }
 
+// Only ONE ad / purchase flow may run at a time; extra taps are ignored (prevents stacked ads).
+let busy = false;
+async function exclusive(fn, fallback) {
+  if (busy) return fallback;
+  busy = true; Sfx.suspend();
+  try { return await fn(); } finally { busy = false; Sfx.resume(); }
+}
+
 export const Ads = {
   _init: null,
+  isBusy: () => busy,
   isNative: native,
   init() {
     if (!native()) return Promise.resolve();
@@ -34,7 +45,8 @@ export const Ads = {
     return AdMob.prepareInterstitial({ adId: AD_UNITS.interstitial, isTesting: TEST_MODE }).catch(() => {});
   },
   // Resolves true only if the user earned the reward.
-  async rewarded(placement) {
+  rewarded(placement) { return exclusive(() => this._rewarded(placement), false); },
+  async _rewarded(placement) {
     if (!native()) return simulate('Rewarded video ad (simulated)', 3, 'Claim reward');
     await this.init();
     let earned = false;
@@ -47,10 +59,10 @@ export const Ads = {
     return earned;
   },
   // Interstitial between runs - never during gameplay, skipped for "Remove Ads" buyers.
-  async interstitial() {
-    if (store().noAds || !native()) return;
-    try { await this.init(); await AdMob.showInterstitial(); } catch (e) { /* not loaded yet */ }
-    this.preloadInterstitial();
+  interstitial() { return exclusive(() => this._interstitial(), false); },
+  async _interstitial() {
+    if (store().noAds || !native()) return false;
+    try { await this.init(); await AdMob.showInterstitial(); this.preloadInterstitial(); return true; } catch (e) { return false; /* not loaded yet */ }
   },
   async banner(show) {
     if (!native() || store().noAds) return;
@@ -71,7 +83,8 @@ export const PRODUCTS = [
 
 export const Billing = {
   // TODO(Play Billing): call the real purchase flow, then grant on success.
-  async purchase(id) {
+  purchase(id) { return exclusive(() => this._purchase(id), false); },
+  async _purchase(id) {
     const p = PRODUCTS.find((x) => x.id === id);
     if (!p) return false;
     let ok = false;
