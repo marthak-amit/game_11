@@ -1,10 +1,13 @@
 // Monetization layer. All game code calls ONLY these functions, so the real SDKs
 // (AdMob + Google Play Billing via Capacitor) can be plugged in later at one place.
 // In a plain browser / before accounts exist, a clearly-labelled simulator runs instead.
+import { Capacitor } from '@capacitor/core';
+import { AdMob, RewardAdPluginEvents, BannerAdSize, BannerAdPosition } from '@capacitor-community/admob';
 import { store, save } from './storage.js';
+import { TEST_MODE, AD_UNITS } from './adconfig.js';
 
 const overlay = () => document.getElementById('adsim');
-const native = () => !!(window.Capacitor && window.Capacitor.isNativePlatform && window.Capacitor.isNativePlatform());
+const native = () => Capacitor.isNativePlatform();
 
 function simulate(title, seconds, okLabel) {
   return new Promise((resolve) => {
@@ -21,19 +24,42 @@ function simulate(title, seconds, okLabel) {
 }
 
 export const Ads = {
-  // TODO(AdMob): replace with  AdMob.prepareRewardVideoAd / showRewardVideoAd  (see README)
+  _init: null,
+  isNative: native,
+  init() {
+    if (!native()) return Promise.resolve();
+    return (this._init ||= AdMob.initialize({ initializeForTesting: TEST_MODE }).then(() => this.preloadInterstitial()).catch((e) => console.warn('AdMob init', e)));
+  },
+  preloadInterstitial() {
+    return AdMob.prepareInterstitial({ adId: AD_UNITS.interstitial, isTesting: TEST_MODE }).catch(() => {});
+  },
+  // Resolves true only if the user earned the reward.
   async rewarded(placement) {
-    if (native() && window.__admobRewarded) return window.__admobRewarded(placement);
-    return simulate('Rewarded video ad (simulated)', 3, 'Claim reward');
+    if (!native()) return simulate('Rewarded video ad (simulated)', 3, 'Claim reward');
+    await this.init();
+    let earned = false;
+    const h = await AdMob.addListener(RewardAdPluginEvents.Rewarded, () => { earned = true; });
+    try {
+      await AdMob.prepareRewardVideoAd({ adId: AD_UNITS.rewarded, isTesting: TEST_MODE });
+      await AdMob.showRewardVideoAd();
+    } catch (e) { console.warn('rewarded failed', e); window.__toast && window.__toast('Ad not available, try again'); }
+    h.remove();
+    return earned;
   },
-  // Interstitial every few runs - never during gameplay, skipped for "Remove Ads" buyers.
+  // Interstitial between runs - never during gameplay, skipped for "Remove Ads" buyers.
   async interstitial() {
-    const s = store();
-    if (s.noAds) return;
-    if (native() && window.__admobInterstitial) return window.__admobInterstitial();
-    // Simulator intentionally silent for interstitials in dev.
+    if (store().noAds || !native()) return;
+    try { await this.init(); await AdMob.showInterstitial(); } catch (e) { /* not loaded yet */ }
+    this.preloadInterstitial();
   },
-  banner(show) { /* TODO(AdMob): show/hide adaptive banner on menu screen only */ },
+  async banner(show) {
+    if (!native() || store().noAds) return;
+    try {
+      await this.init();
+      if (show) { await AdMob.showBanner({ adId: AD_UNITS.banner, adSize: BannerAdSize.ADAPTIVE_BANNER, position: BannerAdPosition.BOTTOM_CENTER, margin: 0, isTesting: TEST_MODE }); document.body.classList.add('banner-on'); }
+      else { await AdMob.removeBanner(); document.body.classList.remove('banner-on'); }
+    } catch (e) { console.warn('banner', e); }
+  },
 };
 
 export const PRODUCTS = [

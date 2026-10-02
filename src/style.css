@@ -90,3 +90,4 @@ background:linear-gradient(135deg,var(--cy),#6a5cff 60%,var(--mg));box-shadow:0 
 #toast.show{opacity:1;transform:translateX(-50%)}
 #adsim{position:fixed;inset:0;background:#000d;z-index:50;display:none;align-items:center;justify-content:center;padding:16px}#adsim.show{display:flex}
 #adsim .cd{font-size:56px;font-weight:900}#adsim small{opacity:.5;font-size:11px}
+body.banner-on #menu{padding-bottom:calc(var(--sab) + 70px)}

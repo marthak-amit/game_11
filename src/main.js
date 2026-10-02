@@ -1,6 +1,7 @@
 import { Game } from './game.js';
 import { Sfx, haptic } from './audio.js';
 import { store, save, SKINS } from './storage.js';
+import { INTERSTITIAL_EVERY_RUNS } from './adconfig.js';
 import { Ads, Billing, PRODUCTS } from './monetization.js';
 import { ensureMissions, reportRun, claimMission, dailyStatus, claimDaily, DAILY_REWARDS } from './missions.js';
 
@@ -67,6 +68,7 @@ function refreshMenu() {
   const list = ensureMissions(); $('missionDot').classList.toggle('hidden', !(list.some((m) => m.progress >= m.goal && !m.claimed) || dailyStatus().canClaim));
 }
 function startRun() {
+  Ads.banner(false);
   Sfx.unlock(); Sfx.ui(); doubled = false;
   ['menu', 'results', 'revive', 'pause', 'modal'].forEach((x) => show(x, false)); show('hud', true);
   Object.keys(hudCache).forEach((k) => delete hudCache[k]);
@@ -87,8 +89,8 @@ $('btnQuit').onclick = () => { show('pause', false); game.state = 'play'; game.d
 $('btnPlay').onclick = startRun;
 $('btnAgain').onclick = async () => { await maybeInterstitial(); startRun(); };
 $('btnHome').onclick = async () => { Sfx.ui(); await maybeInterstitial(); goHome(); };
-function goHome() { ['results', 'revive', 'pause', 'hud'].forEach((x) => show(x, false)); game.toMenu(); show('menu', true); refreshMenu(); }
-async function maybeInterstitial() { runsSinceAd++; if (runsSinceAd >= 3 && S.runs > 2) { runsSinceAd = 0; await Ads.interstitial(); } }
+function goHome() { ['results', 'revive', 'pause', 'hud'].forEach((x) => show(x, false)); game.toMenu(); show('menu', true); refreshMenu(); Ads.banner(true); }
+async function maybeInterstitial() { runsSinceAd++; if (runsSinceAd >= INTERSTITIAL_EVERY_RUNS && S.runs > 2) { runsSinceAd = 0; await Ads.interstitial(); } }
 
 function onDeath(stats) {
   lastStats = stats; show('hud', false);
@@ -197,6 +199,6 @@ function settings() {
   });
 }
 
-refreshMenu();
-if ('serviceWorker' in navigator && location.protocol.startsWith('http') && !location.hostname.includes('localhost')) navigator.serviceWorker.register('./sw.js').catch(() => {});
+refreshMenu(); window.__toast = toast; Ads.init().then(() => Ads.banner(true));
+if ('serviceWorker' in navigator && location.protocol.startsWith('http') && !location.hostname.includes('localhost') && !Ads.isNative()) navigator.serviceWorker.register('./sw.js').catch(() => {});
 window.__game = game; // debugging hook
